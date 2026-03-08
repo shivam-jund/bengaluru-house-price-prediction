@@ -1,0 +1,21 @@
+# Virtual environment
+venv/
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Trained model artifact (exported in a later session).
+# Uncomment if the pickle should not be tracked.
+# *.pkl
+# *.pickle
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
