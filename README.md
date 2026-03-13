@@ -15,11 +15,11 @@ The target variable is `price`, in **lakhs of INR** (1 lakh = 100,000 INR). Pric
 
 ## Data
 
-Kaggle, [Bengaluru House Price Data](https://www.kaggle.com/datasets/amitabhajoy/bengaluru-house-price-data) (file `bengaluru_house_prices.csv`). Terms of use are those on the dataset page.
+Kaggle, [Bengaluru House Price Data](https://www.kaggle.com/datasets/amitabhajoy/bengaluru-house-price-data) (file `Bengaluru_House_Data.csv`). Terms of use are those on the dataset page.
 
 Columns: `area_type`, `availability`, `location`, `size`, `society`, `total_sqft`, `bath`, `balcony`, `price`.
 
-Download the CSV from Kaggle and save it as `data/bengaluru_house_prices.csv`.
+Save the CSV in `data/`. The notebook accepts `bengaluru_house_prices.csv` (the copy used in Session 1) or `Bengaluru_House_Data.csv` (the file name on Kaggle).
 
 ## Setup
 
@@ -38,7 +38,7 @@ jupyter notebook model/price_prediction.ipynb
 ├── requirements.txt
 ├── .gitignore
 ├── data/
-│   └── bengaluru_house_prices.csv    # downloaded from Kaggle (see Data)
+│   └── bengaluru_house_prices.csv  # the dataset (see Data)
 └── model/
     └── price_prediction.ipynb      # cleaning, feature engineering, model building
 ```
@@ -49,3 +49,4 @@ The FastAPI server and the website will be added in later sessions.
 
 - **`area_type` is excluded from the baseline.** "Super built-up Area" and "Carpet Area" change what `total_sqft` actually measures, so the column may carry real signal. It was dropped in Session 1 as a judgment call, not because it is unusable. To test in Session 5: does adding it improve the cross-validation score?
 - **`availability`, `society` and `balcony` were dropped on data-quality grounds** (possession dates mixed with a label, a large share missing with very many distinct names, and a minor amenity count with missing values). Their predictive value was not tested.
+- **The 74 rows dropped for a missing `location`, `size` or `bath` (0.56% of the data) are not a random sample.** Most have a ranged `total_sqft` and no `balcony` value, and 16 are plot listings with no bedroom count, so the baseline under-represents those listing types. Details are in section 4 of the notebook.
