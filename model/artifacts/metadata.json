@@ -1,0 +1,48 @@
+{
+ "created": "2026-11-06",
+ "model": "Pipeline: one-hot encoded location + total_sqft, bath, bhk -> RandomForestRegressor(n_estimators=100, max_depth=None, min_samples_leaf=1)",
+ "target": "price, in lakh INR",
+ "seed": 10,
+ "rows_fitted": 11430,
+ "features": [
+  "location",
+  "total_sqft",
+  "bath",
+  "bhk"
+ ],
+ "location_threshold": 10,
+ "named_locations": 240,
+ "libraries": {
+  "python": "3.13.18",
+  "scikit-learn": "1.9.1",
+  "pandas": "3.1.0",
+  "numpy": "2.5.4",
+  "joblib": "1.6.0"
+ },
+ "validation": {
+  "min_bhk": 1,
+  "min_bath": 1,
+  "min_sqft_per_bedroom": 300,
+  "max_baths_over_bhk": 2,
+  "min_total_sqft": 300.0,
+  "max_total_sqft": 30400.0
+ },
+ "metrics_from_the_model_fit_on_80_percent_of_rows": {
+  "test_rows": 2286,
+  "test_mae_lakh": 25.92,
+  "test_median_percentage_error": 14.9,
+  "test_r2": 0.695,
+  "cv_mae_lakh_mean": 26.39,
+  "cv_mae_lakh_std": 1.22,
+  "typical_error_percent": {
+   "named": 12.7,
+   "other": 26.9
+  }
+ },
+ "notes": [
+  "Predictions for locations in 'other' are about twice as uncertain as for named locations.",
+  "The model was trained only on listings that passed the Session 4 cleaning rules; predict_price rejects inputs those rules would remove.",
+  "The model underestimates the most expensive homes (300 lakh and above).",
+  "Load the pickle only with the scikit-learn version above, and only from a source you trust: a pickle runs code when it is loaded."
+ ]
+}
