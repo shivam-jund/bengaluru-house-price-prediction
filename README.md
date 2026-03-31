@@ -30,7 +30,7 @@ pip install -r requirements.txt
 jupyter notebook model/price_prediction.ipynb
 ```
 
-The results in the notebook were produced with Python 3.13, pandas 3.1.0, NumPy 2.5.4, Matplotlib 3.11.2 and scikit-learn 1.9.1. `requirements.txt` is not pinned yet (Session 9 pins it), so a newer or older version may print slightly different numbers (`LinearRegression` on a sparse matrix is solved iteratively, and a fully grown tree depends on how ties between equal splits are visited, so the last decimals can move). The notebook takes about 3 minutes to run, almost all of it in the random-forest grid search of Session 5.
+The results in the notebook were produced with Python 3.13, pandas 3.1.0, NumPy 2.5.4, Matplotlib 3.11.2 and scikit-learn 1.9.1. `requirements.txt` pins `scikit-learn` (a pickle loads only with the version that wrote it; see Model export) and leaves the other libraries unpinned until Session 9, so a newer or older version of those may print slightly different numbers (`LinearRegression` on a sparse matrix is solved iteratively, and a fully grown tree depends on how ties between equal splits are visited, so the last decimals can move). The notebook takes about 7 minutes to run, almost all of it in the random-forest grid search of Session 5 and the cross-validation runs of Session 6.
 
 ## Repository layout
 
@@ -42,11 +42,17 @@ The results in the notebook were produced with Python 3.13, pandas 3.1.0, NumPy 
 ├── data/
 │   └── bengaluru_house_prices.csv  # the dataset (see Data)
 └── model/
-    ├── price_prediction.ipynb      # Sessions 1-5: cleaning, features, location grouping, duplicate and outlier removal, model building and selection
-    └── price_prediction_2026-11-04_session4b.ipynb   # dated copy: the notebook as it stood at the end of Session 4b, before any model code
+    ├── price_prediction.ipynb      # Sessions 1-6: cleaning, features, location grouping, duplicate and outlier removal, model building and selection, robustness checks, export
+    ├── price_prediction_2026-11-04_session4b.ipynb   # dated copy: the notebook as it stood at the end of Session 4b, before any model code
+    ├── price_prediction_2026-11-06_session5.ipynb    # dated copy: the notebook as it stood at the end of Session 5, before the robustness checks
+    ├── pricing.py                  # normalize_location, load_artifacts, predict_price (used by the notebook and, in Session 7, by the API)
+    └── artifacts/                  # written by the notebook at the end of Session 6
+        ├── house_price_model.pkl   # the fitted Pipeline (joblib, compress=3), 16.1 MB
+        ├── locations.json          # the 240 location names plus other, and the lowercase-name lookup
+        └── metadata.json           # library versions, seed, rows, features, validation limits, metrics, notes
 ```
 
-The predict function and the pickle export come in Session 6, the FastAPI server in Session 7 and the website in Session 8.
+The FastAPI server comes in Session 7 and the website in Session 8.
 
 ## Location handling (Session 3)
 
@@ -56,7 +62,7 @@ The predict function and the pickle export come in Session 6, the FastAPI server
 2. **Group rare locations.** A location with 10 or fewer listings is replaced by `other`. That leaves 240 named locations plus `other`, 241 categories in all. At the end of Session 3, `other` held 2,868 of the 13,232 rows (21.7%) and was the largest category (the largest named location, Whitefield, has 537).
 3. **No hand edits.** Nine names with a digit glued to a letter (for example "1Hanuman Nagar") are left as they are. Each has one listing, so all of them fall into `other`.
 
-The threshold of 10 is a convention. On those 13,232 rows the notebook compares it with 5 (386 named locations, 13.3% of the rows in `other`) and 20 (143 named locations, 32.3%); Session 6 tests whether a different one changes the cross-validation score.
+The threshold of 10 is a convention. On those 13,232 rows the notebook compares it with 5 (386 named locations, 13.3% of the rows in `other`) and 20 (143 named locations, 32.3%); Session 6 then compared them by cross-validation, counting listings on these 13,232 rows, and kept 10 (see Robustness checks).
 
 ## Duplicate and outlier removal (Session 4, revised as 4b)
 
@@ -168,9 +174,63 @@ Cross-validation expected an MAE of 26.39 ± 1.22 lakh, so the test score agrees
 
 Two of the three are inside the middle half of their comparable listings. Whitefield is at the low end (17% under the median): 1,200 sqft is a heaped area (5.1% of the training rows) and Whitefield prices climb steeply around it, so the window of ±15% mixes cheaper and dearer listings, and the ten listings at exactly 1,200 sqft have a mean of 48.1. The `other` case is 31% above the median and above the middle half; the forest follows the 66 `other` listings at exactly 1,200 sqft (mean 71.6), and its prediction moves between 60.1 and 84.5 for area changes of 50 sqft or less. Nothing was changed because of these checks.
 
+## Robustness checks and export (Session 6)
+
+### Robustness checks
+
+Cross-validation as in Session 5 (training rows only, the same 5 folds and seed, the forest fixed to the Session 5 winner, no test set). The rule, fixed before the runs: change a setting only if the mean MAE improves by at least 1 lakh **and** the variant wins on at least 4 of the 5 folds, compared with the current setup on the same folds.
+
+| Variant | Rows | Categories | Rows in `other` | CV MAE ± std (lakh) | Lower than current by | Folds won | Decision |
+|:--|--:|--:|--:|--:|--:|--:|:--|
+| Current (threshold 10) | 11,430 | 241 | 21.4% | 26.39 ± 1.22 | | | baseline |
+| Threshold 5 | 11,430 | 387 | 13.1% | 25.62 ± 1.03 | 0.77 | 4 of 5 | keep the current setup |
+| Threshold 20 | 11,430 | 144 | 31.5% | 27.65 ± 1.29 | −1.27 | 0 of 5 | keep the current setup |
+| `area_type` added (one-hot) | 11,430 | 241 | 21.4% | 25.96 ± 1.37 | 0.43 | 5 of 5 | keep the current setup |
+| Repeats left in (diagnostic) | 11,878 | 241 | 20.7% | 25.30 ± 1.32 | 1.09 | | diagnostic only: repeats stay removed |
+
+- **No setting changes.** Threshold 5 and `area_type` each help a little, consistently, but by less than the rule's 1 lakh, which is also under the fold standard deviation of about 1.2. They are recorded as candidates, not findings. Threshold 20 is worse.
+- **The repeats are a leak.** With rule 1 switched off the CV MAE looks 1.1 lakh better, because copies of one listing sit on both sides of a fold and the model is scored on homes it has seen. The rows differ between the two runs, so this is a diagnostic, not a paired comparison.
+- **"Rows"** is the size of the frame the variant is built on; the cross-validation itself runs on the 9,144 training rows of Session 5 (for the repeats run, on the training part of its own 80/20 split).
+- **Thresholds** count listings per cleaned name on the 13,232 rows of Session 3, so threshold 10 reproduces the current frame exactly. **`area_type`** is reloaded from the raw CSV by row index and one-hot encoded next to `location`.
+
+### The predict function
+
+`model/pricing.py` holds everything the API needs, so the logic is not copied into the server:
+
+```python
+from pricing import predict_price
+predict_price("Whitefield", 1200, 2, 2)
+# {'price_lakh': 48.0, 'location': 'Whitefield', 'location_type': 'named'}
+```
+
+Run it from `model/` or put `model/` on `sys.path`.
+
+- `normalize_location(name)` collapses whitespace and removes trailing commas and periods, keeping the capitalisation. The notebook (Sessions 3 and 4) imports this same function.
+- `load_artifacts()` reads the three artifacts once and warns if the installed scikit-learn is not the one in `metadata.json`.
+- `predict_price(location, total_sqft, bath, bhk)` returns the price in lakh (one decimal), the location used and whether it is `named` or `other`. A name is matched after `normalize_location` and `.casefold()`; a name that is not in the list is treated as `other` (so "Whitefield " is Whitefield and "Nowhere Layout" is `other`).
+- **Validation.** It raises `ValueError` with a readable message for: fewer than 300 sqft per bedroom, more than `bhk + 2` bathrooms, `bhk` or `bath` below 1 or not whole, `total_sqft` outside 300 to 30,400 (the range of the training data), values that are not numbers, and an empty location. These are the Session 4 rules, applied to the input: the model only saw homes that passed them. Session 7 turns the errors into HTTP 422.
+
+### Model export
+
+The final configuration (Session 5, nothing changed by the checks above) is **refitted on all 11,430 rows** and written to `model/artifacts/`:
+
+| File | Contents | Size |
+|:--|:--|--:|
+| `house_price_model.pkl` | the fitted Pipeline, `joblib.dump(..., compress=3)`; load with `joblib.load` | 16.1 MB (75.1 MB without compression) |
+| `locations.json` | `display_names` (240 names plus `other`) and `key_to_name` (lowercase name to display name) | 13 KB |
+| `metadata.json` | library versions, date, seed, rows fitted, feature names, validation limits, Session 5 metrics, notes | 1 KB |
+
+The three files total 16.2 MB, under the 50 MB limit. Compression changes the file, not the model: a test reloads it and compares predictions.
+
+- **The deployed model has no held-out score of its own.** It has seen the 20% that Session 5 held out. `metadata.json` labels its metrics as "from the model fit on 80% of the rows" (test MAE 25.92 lakh, median % error 14.9%, CV MAE 26.39 ± 1.22; typical error 12.7% for named locations and 26.9% for `other`).
+- **Both models on the three sanity inputs:** Whitefield 48.0 and 48.0 lakh, Sarjapur Road 103.2 and 97.4, an unlisted place 71.9 and 73.0 (the Session 5 model and the refit).
+- **Tests** (plain `assert`s, in the notebook): the reloaded model predicts identically to the in-memory one; the three sanity inputs fall inside the 10th to 90th percentile of similar listings; 500 sqft with 3 BHK and 1 BHK with 4 bathrooms are rejected; "Whitefield " becomes Whitefield and "Nowhere Layout" becomes `other`. A fresh Python process, with only `from pricing import predict_price`, returns a prediction.
+- **Security and versions.** A pickle runs code when it is loaded: load `house_price_model.pkl` only from a source you trust. It loads reliably only with the scikit-learn version that wrote it (1.9.1, pinned in `requirements.txt` and recorded in `metadata.json`).
+- **Predictions for `other` are about twice as uncertain** as for named locations; `metadata.json` says so, and Session 7 surfaces it in the API.
+
 ## Known limitations
 
-- **`area_type` is excluded from the baseline.** "Super built-up Area" and "Carpet Area" change what `total_sqft` actually measures, so the column may carry real signal. It was dropped in Session 1 as a judgment call, not because it is unusable. Session 6 tests whether adding it improves the cross-validation score.
+- **`area_type` is excluded from the baseline.** "Super built-up Area" and "Carpet Area" change what `total_sqft` actually measures, so the column may carry real signal. It was dropped in Session 1 as a judgment call, not because it is unusable. Session 6 tested it (one-hot, same folds): CV MAE 25.96 against 26.39 and 5 of 5 folds won, but the gain of 0.43 lakh is under the 1 lakh rule, so it was not added. Adding it later would mean one more input in the API and on the website.
 - **`availability`, `society` and `balcony` were dropped on data-quality grounds** (possession dates mixed with a label, a large share missing with very many distinct names, and a minor amenity count with missing values). Their predictive value was not tested.
 - **The 74 rows dropped for a missing `location`, `size` or `bath` (0.56% of the data) are not a random sample.** Most have a ranged `total_sqft` and no `balcony` value, and 16 are plot listings with no bedroom count, so the baseline under-represents those listing types. Details are in section 4 of the notebook.
 - **"RK" listings are counted as 1 BHK.** 13 rows (0.10%) are written "1 RK" (one room plus a kitchen, no separate bedroom). They got `bhk = 1`, so the model cannot tell them from 1 BHK flats. Their median price is lower (25.25 lakh against 32.00 lakh for 1 BHK).
@@ -184,15 +244,19 @@ Two of the three are inside the middle half of their comparable listings. Whitef
 - **`price_per_sqft` is built from the target (`price`).** It was made to spot outliers, and the Session 4 fences use it, so it stays in the Session 4 frame. Session 5 drops it before any model (the notebook asserts it is gone), and it must never be a model input.
 - **The grouping and the Session 4 rules use all rows.** Which locations stay named is decided from listing counts over all 13,232 rows, and the repeats, domain rules and fences are computed on all rows, all before the train/test split, so they use information from rows that will later be test data. Because the fences use `price_per_sqft`, a row is also kept or removed according to its own price, test rows included: a model is scored on listings that pass the rules, while the website can receive a listing the rules would have removed. The Session 5 scores describe listings that passed these rules. A stricter version would compute everything on the training rows only.
 - **The location grouping was not redone after the removals.** `other` now holds 2,442 of the 11,430 rows (21.4%, against 21.7% before the rules), and 36 of the 240 named locations have 10 or fewer rows left (the smallest has 5).
-- **`other` is a catch-all, not a place.** It mixes many rare locations: in Session 3 its median price per sqft was 5,908 INR against 5,333 for the named locations, and its middle half was much wider (4,444 to 10,000 against 4,221 to 6,978). Knowing that a listing is in `other` says little about its price. Session 5 measured about twice the error there (test MAE 49.53 lakh against 19.31 for the named locations, median % error 26.9% against 12.7%), and the forest's predictions for an `other` listing move a lot with small changes of area. Session 6 tests other thresholds, and the website session decides how `other` is treated.
+- **`other` is a catch-all, not a place.** It mixes many rare locations: in Session 3 its median price per sqft was 5,908 INR against 5,333 for the named locations, and its middle half was much wider (4,444 to 10,000 against 4,221 to 6,978). Knowing that a listing is in `other` says little about its price. Session 5 measured about twice the error there (test MAE 49.53 lakh against 19.31 for the named locations, median % error 26.9% against 12.7%), and the forest's predictions for an `other` listing move a lot with small changes of area. Session 6 tested thresholds 5 and 20 and kept 10, and the website session decides how `other` is treated.
 - **Names are merged only by whitespace, case and trailing punctuation.** Misspellings ("Whietfield"), other spellings of what looks like the same road ("Kanakapura Road" next to "Kanakpura Road") and compound names with an inner comma ("Judicial Layout, Kanakapura Road") stay separate. The rare ones fall into `other`.
 - **The test numbers come from one random split with one seed.** The final model's fold MAEs range from 24.8 to 28.3 lakh, so another split would give somewhat different test numbers, and a difference of a lakh or so between two models should not be read as real. The 300+ lakh band has only 123 test rows and the 150 to 300 band 236, so their numbers are rough.
-- **The final forest is large.** The pickled Pipeline is 62.3 MB (100 trees with no depth limit and one row per leaf). GitHub warns above 50 MB and refuses files above 100 MB, so it needs a decision before it goes into a repository.
+- **The final forest is large.** The plain pickle of the model fitted on all rows is 75.1 MB (100 trees with no depth limit and one row per leaf); `joblib.dump(..., compress=3)` brings the file to 16.1 MB with identical predictions, under GitHub's 50 MB warning. The forest itself was not made smaller.
 - **Some ideas were left out on purpose.** A `log(total_sqft)` feature (the brief fixes four features), scaling for Lasso, more trees or `max_features` for the forest, and a split stratified on price band were not tried. The forest's best setting is at the edge of its grid (no depth limit, one row per leaf), so a wider grid might find a slightly better one; its lead over the next model is 3.6 lakh of MAE.
-- **A location the encoder has not seen is encoded as zeros.** That is not the same as `other`; it matters for the website, where someone can type a place that is not in the list.
+- **A location the encoder has not seen is encoded as zeros.** That is not the same as `other`; `predict_price` avoids it by mapping every name that is not in the list to `other` before the model sees it.
+- **`predict_price` has no upper limit on `bhk` or `bath`.** A 40 BHK with enough area passes the checks, and the forest answers like the nearest homes it has seen.
+- **The refit model is not scored.** The metrics in `metadata.json` come from the model fitted on 80% of the rows, so the deployed model's own error is expected to be similar, not measured.
+- **The `other` swing is mostly data.** Many listings are at heaped areas (1,200 sqft and similar) and `other` mixes many places, so its predictions move a lot with small changes of area. This is documented, not fixed.
 
 ## Open items
 
-- **Session 6**: robustness checks and the predict function, and the pickle export. The checks are: location thresholds 5 and 20 on the cleaned frame (36 named locations now have 10 or fewer rows), to see whether `other` improves; scores with and without the repeats; `area_type` as a feature; and the dearest homes (27.7% of the listings priced 300 lakh or more were removed). Each change is judged by cross-validation on the training rows, as in Session 5. The pickled forest is 62.3 MB.
-- **`other` on the website**: the website session decides how it is treated, and how a place that is not in the list is mapped.
-- **Session 9**: pinned `requirements.txt`, an end-to-end test, and Git if you choose.
+- **Session 7**: the FastAPI server around `predict_price` (HTTP 422 for the `ValueError`s, the `other` uncertainty in the response).
+- **Session 8**: the website. It decides how a typed place that is not in the list is shown (`other`).
+- **Candidates not adopted in Session 6**: location threshold 5 and `area_type`, both under the 1 lakh rule. The dearest homes remain under-predicted.
+- **Session 9**: pin the other libraries in `requirements.txt`, an end-to-end test, and Git if you choose.
